@@ -40,16 +40,14 @@ Terminal image workflows are awkward: dragging a screenshot into a terminal usua
 Once published to npm, install the package with pi:
 
 ```bash
-pi install npm:paster
+pi install npm:pi-paster
 ```
 
 Or try it without installing:
 
 ```bash
-pi -e npm:paster
+pi -e npm:pi-paster
 ```
-
-> Note: the unscoped npm name `paster` is already taken. If this package is published under a scope, use that package name instead, for example `pi install npm:@your-scope/paster`.
 
 For local development/testing:
 
@@ -94,7 +92,7 @@ By default all editor integrations are enabled.
 To customize behavior, load a small wrapper extension:
 
 ```ts
-import { createPaster } from "paster";
+import { createPaster } from "pi-paster";
 
 export default createPaster({
   customEditor: {
