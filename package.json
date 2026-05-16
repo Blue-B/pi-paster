@@ -1,6 +1,6 @@
 {
   "name": "pi-paster",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Pi extension that turns pasted image paths into first-class image attachments.",
   "keywords": [
     "image-attachments",
@@ -55,6 +55,6 @@
     "extensions": [
       "./src/index.ts"
     ],
-    "image": "https://unpkg.com/pi-paster@0.1.3/docs/preview.png"
+    "image": "https://unpkg.com/pi-paster@0.1.4/docs/preview.png"
   }
 }
