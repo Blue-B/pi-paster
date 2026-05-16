@@ -6,7 +6,7 @@ import type { ImageAttachment } from "./types.ts";
 
 export const PASTE_START = "\x1b[200~";
 export const PASTE_END = "\x1b[201~";
-const PLACEHOLDER_REGEX = /\[#image\d+\]/g;
+const PLACEHOLDER_REGEX = /\[#image \d+\]/g;
 
 interface EditorCursor {
   line: number;
@@ -67,6 +67,7 @@ export class PasterEditor extends CustomEditor {
       cwd: string;
       store: AttachmentStore;
       notify: (message: string) => void;
+      deletePlaceholderAsBlock: boolean;
       setCursorPreview: (attachment: ImageAttachment | undefined) => void;
       pasteClipboardImage?: () =>
         | Promise<ImageAttachment | undefined>
@@ -88,7 +89,8 @@ export class PasterEditor extends CustomEditor {
 
   override handleInput(data: string): void {
     if (this.handleBracketedPaste(data)) return;
-    if (this.handleAtomicPlaceholderDelete(data)) return;
+    if (this.pasterOptions.deletePlaceholderAsBlock && this.handleAtomicPlaceholderDelete(data))
+      return;
 
     super.handleInput(data);
     this.updateCursorPreview();

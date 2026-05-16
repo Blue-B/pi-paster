@@ -18,7 +18,7 @@ export class AttachmentStore {
     const attachment: ImageAttachment = {
       ...input,
       id,
-      placeholder: `[#image${id}]`,
+      placeholder: `[#image ${id}]`,
       createdAt: Date.now(),
     };
     this.attachments.set(attachment.placeholder, attachment);

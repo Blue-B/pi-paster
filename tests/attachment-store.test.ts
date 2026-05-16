@@ -16,11 +16,11 @@ describe("AttachmentStore", () => {
       data: "bbb",
     });
 
-    expect(first.placeholder).toBe("[#image1]");
-    expect(second.placeholder).toBe("[#image2]");
+    expect(first.placeholder).toBe("[#image 1]");
+    expect(second.placeholder).toBe("[#image 2]");
     expect(store.list().map((attachment) => attachment.placeholder)).toEqual([
-      "[#image1]",
-      "[#image2]",
+      "[#image 1]",
+      "[#image 2]",
     ]);
   });
 
@@ -30,10 +30,13 @@ describe("AttachmentStore", () => {
     store.add({ originalPath: "/tmp/b.webp", mimeType: "image/webp", data: "bbb" });
 
     const matches = store.matchingPlaceholders(
-      "compare [#image2] with [#image1] and [#image2] again",
+      "compare [#image 2] with [#image 1] and [#image 2] again",
     );
 
-    expect(matches.map((attachment) => attachment.placeholder)).toEqual(["[#image2]", "[#image1]"]);
+    expect(matches.map((attachment) => attachment.placeholder)).toEqual([
+      "[#image 2]",
+      "[#image 1]",
+    ]);
   });
 
   test("clear resets pending attachments and ids", () => {
@@ -45,6 +48,6 @@ describe("AttachmentStore", () => {
     expect(store.list()).toEqual([]);
     expect(
       store.add({ originalPath: "/tmp/b.png", mimeType: "image/png", data: "bbb" }).placeholder,
-    ).toBe("[#image1]");
+    ).toBe("[#image 1]");
   });
 });

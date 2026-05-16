@@ -1,12 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readClipboardImage } from "./clipboard.ts";
+import { type PasterConfig, resolvePasterConfig } from "./config.ts";
 import { PasterEditor } from "./editor.ts";
 import { imagesForText } from "./image-utils.ts";
 import { CursorImagePreviewWidget, ImagePreviewMessage } from "./preview.ts";
 import { AttachmentStore } from "./store.ts";
-import type { PasterPreviewDetails } from "./types.ts";
+import { createImagePasteTerminalInputHandler } from "./terminal-input.ts";
+import type { ImageAttachment, PasterPreviewDetails } from "./types.ts";
 
 export * from "./clipboard.ts";
+export * from "./config.ts";
 export * from "./editor.ts";
 export * from "./image-utils.ts";
 export * from "./preview.ts";
@@ -14,10 +17,16 @@ export * from "./store.ts";
 export * from "./terminal-input.ts";
 export * from "./types.ts";
 
-export default function paster(pi: ExtensionAPI): void {
+export function createPaster(config: PasterConfig = {}): (pi: ExtensionAPI) => void {
+  return (pi) => paster(pi, config);
+}
+
+export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): void {
+  const resolvedConfig = resolvePasterConfig(config);
   const store = new AttachmentStore();
-  let pendingPreview = [] as ReturnType<AttachmentStore["matchingPlaceholders"]>;
+  let pendingPreview: ImageAttachment[] = [];
   let activeEditor: PasterEditor | undefined;
+  let unsubscribeTerminalInput: (() => void) | undefined;
 
   pi.registerMessageRenderer<PasterPreviewDetails>("paster-preview", (message, _options, theme) => {
     const placeholders = message.details?.placeholders ?? [];
@@ -33,47 +42,69 @@ export default function paster(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     store.clear();
     pendingPreview = [];
-    if (ctx.hasUI) {
-      ctx.ui.setEditorComponent((tui, theme, keybindings) => {
-        activeEditor = new PasterEditor(tui, theme, keybindings, {
+    if (!ctx.hasUI) return;
+
+    unsubscribeTerminalInput?.();
+    unsubscribeTerminalInput = undefined;
+    activeEditor?.clearCursorPreview();
+    activeEditor = undefined;
+    ctx.ui.setWidget("paster-cursor-preview", undefined, { placement: "aboveEditor" });
+
+    if (!resolvedConfig.customEditor.enabled) {
+      unsubscribeTerminalInput = ctx.ui.onTerminalInput(
+        createImagePasteTerminalInputHandler({
           cwd: ctx.cwd,
           store,
           notify: (message) => ctx.ui.notify(message, "warning"),
-          pasteClipboardImage: () => {
-            const result = readClipboardImage();
-            if (!result.ok) {
-              if (result.reason !== "empty" && result.reason !== "unsupported-platform") {
-                ctx.ui.notify("paster: clipboard image could not be attached", "warning");
-              }
-              return undefined;
-            }
-            return store.add(result.image);
-          },
-          setCursorPreview: (attachment) => {
-            ctx.ui.setWidget(
-              "paster-cursor-preview",
-              attachment
-                ? (_tui, widgetTheme) =>
-                    new CursorImagePreviewWidget(attachment, {
-                      title: (text) => widgetTheme.fg("accent", text),
-                      muted: (text) => widgetTheme.fg("muted", text),
-                      accent: (text) => widgetTheme.fg("accent", text),
-                    })
-                : undefined,
-              { placement: "aboveEditor" },
-            );
-          },
-        });
-        return activeEditor;
-      });
+        }),
+      );
+      return;
     }
+
+    ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+      activeEditor = new PasterEditor(tui, theme, keybindings, {
+        cwd: ctx.cwd,
+        store,
+        notify: (message) => ctx.ui.notify(message, "warning"),
+        deletePlaceholderAsBlock: resolvedConfig.customEditor.deletePlaceholderAsBlock,
+        pasteClipboardImage: () => {
+          const result = readClipboardImage();
+          if (!result.ok) {
+            if (result.reason !== "empty" && result.reason !== "unsupported-platform") {
+              ctx.ui.notify("paster: clipboard image could not be attached", "warning");
+            }
+            return undefined;
+          }
+          return store.add(result.image);
+        },
+        setCursorPreview: (attachment) => {
+          if (!resolvedConfig.customEditor.showImagePreview) return;
+          ctx.ui.setWidget(
+            "paster-cursor-preview",
+            attachment
+              ? (_tui, widgetTheme) =>
+                  new CursorImagePreviewWidget(attachment, {
+                    title: (text) => widgetTheme.fg("accent", text),
+                    muted: (text) => widgetTheme.fg("muted", text),
+                    accent: (text) => widgetTheme.fg("accent", text),
+                  })
+              : undefined,
+            { placement: "aboveEditor" },
+          );
+        },
+      });
+      return activeEditor;
+    });
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
     pendingPreview = [];
     if (ctx.hasUI) {
+      unsubscribeTerminalInput?.();
+      unsubscribeTerminalInput = undefined;
       activeEditor?.clearCursorPreview();
       activeEditor = undefined;
+      ctx.ui.setWidget("paster-cursor-preview", undefined, { placement: "aboveEditor" });
       ctx.ui.setEditorComponent(undefined);
     }
     store.clear();
