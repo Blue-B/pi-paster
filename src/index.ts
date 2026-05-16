@@ -1,10 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readClipboardImage } from "./clipboard.ts";
 import { PasterEditor } from "./editor.ts";
 import { imagesForText } from "./image-utils.ts";
 import { CursorImagePreviewWidget, ImagePreviewMessage } from "./preview.ts";
 import { AttachmentStore } from "./store.ts";
 import type { PasterPreviewDetails } from "./types.ts";
 
+export * from "./clipboard.ts";
 export * from "./editor.ts";
 export * from "./image-utils.ts";
 export * from "./preview.ts";
@@ -37,6 +39,16 @@ export default function paster(pi: ExtensionAPI): void {
           cwd: ctx.cwd,
           store,
           notify: (message) => ctx.ui.notify(message, "warning"),
+          pasteClipboardImage: () => {
+            const result = readClipboardImage();
+            if (!result.ok) {
+              if (result.reason !== "empty" && result.reason !== "unsupported-platform") {
+                ctx.ui.notify("paster: clipboard image could not be attached", "warning");
+              }
+              return undefined;
+            }
+            return store.add(result.image);
+          },
           setCursorPreview: (attachment) => {
             ctx.ui.setWidget(
               "paster-cursor-preview",

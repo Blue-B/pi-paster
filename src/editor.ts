@@ -68,9 +68,16 @@ export class PasterEditor extends CustomEditor {
       store: AttachmentStore;
       notify: (message: string) => void;
       setCursorPreview: (attachment: ImageAttachment | undefined) => void;
+      pasteClipboardImage?: () =>
+        | Promise<ImageAttachment | undefined>
+        | ImageAttachment
+        | undefined;
     },
   ) {
     super(tui, theme, pasterKeybindings);
+    this.onPasteImage = () => {
+      void this.handlePasteClipboardImage();
+    };
   }
 
   override insertTextAtCursor(text: string): void {
@@ -90,6 +97,14 @@ export class PasterEditor extends CustomEditor {
   clearCursorPreview(): void {
     this.activePreviewPlaceholder = undefined;
     this.pasterOptions.setCursorPreview(undefined);
+  }
+
+  private async handlePasteClipboardImage(): Promise<void> {
+    const attachment = await this.pasterOptions.pasteClipboardImage?.();
+    if (!attachment) return;
+    super.insertTextAtCursor(attachment.placeholder);
+    this.updateCursorPreview();
+    this.tui.requestRender();
   }
 
   private handleBracketedPaste(data: string): boolean {

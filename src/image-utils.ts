@@ -148,6 +148,10 @@ export function tokenizePathLikeText(text: string): PathToken[] {
   return tokens;
 }
 
+export function dimensionsForImage(data: string, mimeType: SupportedImageMimeType) {
+  return getImageDimensions(data, mimeType) ?? undefined;
+}
+
 export function loadImageFromPath(
   inputPath: string,
   cwd: string,
@@ -171,7 +175,7 @@ export function loadImageFromPath(
         originalPath: path,
         mimeType,
         data: base64Data,
-        dimensions: getImageDimensions(base64Data, mimeType) ?? undefined,
+        dimensions: dimensionsForImage(base64Data, mimeType),
       },
     };
   } catch {
