@@ -1,13 +1,21 @@
 {
   "name": "pi-paster",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Pi extension that turns pasted image paths into first-class image attachments.",
   "keywords": [
     "image-attachments",
     "pi-extension",
     "pi-package"
   ],
+  "homepage": "https://github.com/beowulf11/pi-paster#readme",
+  "bugs": {
+    "url": "https://github.com/beowulf11/pi-paster/issues"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beowulf11/pi-paster.git"
+  },
   "files": [
     "dist",
     "src",
@@ -48,6 +56,6 @@
     "extensions": [
       "./src/index.ts"
     ],
-    "image": "https://unpkg.com/pi-paster@0.1.1/docs/preview.png"
+    "image": "https://unpkg.com/pi-paster@0.1.2/docs/preview.png"
   }
 }
