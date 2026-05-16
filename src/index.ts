@@ -1,8 +1,23 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Image, type Component, type ImageTheme } from "@earendil-works/pi-tui";
+import { basename, isAbsolute, resolve } from "node:path";
+import {
+  CustomEditor,
+  type ExtensionAPI,
+  type KeybindingsManager,
+} from "@earendil-works/pi-coding-agent";
+import {
+  getImageDimensions,
+  Image,
+  type Component,
+  type EditorTheme,
+  type ImageDimensions,
+  type ImageTheme,
+  type OverlayHandle,
+  truncateToWidth,
+  type TUI,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 
 export const EXTENSION_NAME = "paster";
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -15,6 +30,7 @@ export interface ImageAttachment {
   originalPath: string;
   mimeType: SupportedImageMimeType;
   data: string;
+  dimensions?: ImageDimensions;
   createdAt: number;
 }
 
@@ -22,6 +38,7 @@ export interface LoadedImage {
   originalPath: string;
   mimeType: SupportedImageMimeType;
   data: string;
+  dimensions?: ImageDimensions;
 }
 
 export interface PasterImageContent {
@@ -61,6 +78,10 @@ export class AttachmentStore {
     };
     this.attachments.set(attachment.placeholder, attachment);
     return attachment;
+  }
+
+  get(placeholder: string): ImageAttachment | undefined {
+    return this.attachments.get(placeholder);
   }
 
   matchingPlaceholders(text: string): ImageAttachment[] {
@@ -226,12 +247,14 @@ export function loadImageFromPath(
     const mimeType = detectImageMimeType(data);
     if (!mimeType) return { ok: false, reason: "unsupported", path };
 
+    const base64Data = data.toString("base64");
     return {
       ok: true,
       image: {
         originalPath: path,
         mimeType,
-        data: data.toString("base64"),
+        data: base64Data,
+        dimensions: getImageDimensions(base64Data, mimeType) ?? undefined,
       },
     };
   } catch {
@@ -330,8 +353,301 @@ class ImagePreviewMessage implements Component {
   }
 }
 
+interface TextPreviewTheme {
+  border: (text: string) => string;
+  title: (text: string) => string;
+  muted: (text: string) => string;
+  accent: (text: string) => string;
+}
+
+class CursorImagePreviewOverlay implements Component {
+  constructor(
+    private attachment: ImageAttachment,
+    private readonly theme: TextPreviewTheme,
+  ) {}
+
+  setAttachment(attachment: ImageAttachment): void {
+    this.attachment = attachment;
+  }
+
+  render(width: number): string[] {
+    const innerWidth = Math.max(20, width - 2);
+    const title = truncateToWidth(
+      ` ${this.attachment.placeholder} ${basename(this.attachment.originalPath)} `,
+      innerWidth,
+      "",
+    );
+    const top = this.withBorderTitle(title, innerWidth);
+    const bottom = this.theme.border(`╰${"─".repeat(innerWidth)}╯`);
+    return [top, ...this.renderTextImage(innerWidth), bottom];
+  }
+
+  invalidate(): void {}
+
+  private withBorderTitle(title: string, innerWidth: number): string {
+    const titleWidth = visibleWidth(title);
+    return (
+      this.theme.border("╭") +
+      this.theme.title(title) +
+      this.theme.border(`${"─".repeat(Math.max(0, innerWidth - titleWidth))}╮`)
+    );
+  }
+
+  private contentLine(text: string, innerWidth: number): string {
+    const truncated = truncateToWidth(text, innerWidth, "…", true);
+    return `${this.theme.border("│")}${truncated}${" ".repeat(Math.max(0, innerWidth - visibleWidth(truncated)))}${this.theme.border("│")}`;
+  }
+
+  private renderTextImage(innerWidth: number): string[] {
+    const dimensions = this.attachment.dimensions;
+    const maxArtWidth = Math.min(56, Math.max(10, innerWidth));
+    const maxArtHeight = 16;
+    const aspect =
+      dimensions && dimensions.heightPx > 0 ? dimensions.widthPx / dimensions.heightPx : 1;
+    const artWidth = Math.max(8, Math.min(maxArtWidth, Math.round(maxArtHeight * aspect * 2)));
+    const artHeight = Math.max(
+      4,
+      Math.min(maxArtHeight, Math.round(artWidth / Math.max(0.5, aspect) / 2)),
+    );
+    const fillChars = ["░", "▒", "▓", "▒"];
+    const art = Array.from({ length: artHeight }, (_, row) => {
+      const fill = fillChars[row % fillChars.length]!;
+      return fill.repeat(artWidth);
+    });
+    const padLeft = Math.max(0, Math.floor((innerWidth - artWidth) / 2));
+    const padTop = 0;
+    const padBottom = 0;
+    return [
+      ...Array.from({ length: padTop }, () => this.contentLine("", innerWidth)),
+      ...art.map((line) =>
+        this.contentLine(`${" ".repeat(padLeft)}${this.theme.accent(line)}`, innerWidth),
+      ),
+      ...Array.from({ length: padBottom }, () => this.contentLine("", innerWidth)),
+    ];
+  }
+}
+
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
+const PLACEHOLDER_REGEX = /\[#image\d+\]/g;
+
+interface EditorCursor {
+  line: number;
+  col: number;
+}
+
+interface PlaceholderAtCursor {
+  attachment: ImageAttachment;
+  line: number;
+  start: number;
+  end: number;
+}
+
+function findPlaceholderAtCursor(
+  store: AttachmentStore,
+  lines: string[],
+  cursor: EditorCursor,
+  mode: "hover" | "backspace" | "delete",
+): PlaceholderAtCursor | undefined {
+  const line = lines[cursor.line] ?? "";
+  for (const match of line.matchAll(PLACEHOLDER_REGEX)) {
+    const placeholder = match[0];
+    const start = match.index;
+    const end = start + placeholder.length;
+    const attachment = store.get(placeholder);
+    if (!attachment) continue;
+
+    if (mode === "hover" && cursor.col >= start && cursor.col <= end) {
+      return { attachment, line: cursor.line, start, end };
+    }
+    if (mode === "backspace" && cursor.col > start && cursor.col <= end) {
+      return { attachment, line: cursor.line, start, end };
+    }
+    if (mode === "delete" && cursor.col >= start && cursor.col < end) {
+      return { attachment, line: cursor.line, start, end };
+    }
+  }
+  return undefined;
+}
+
+interface EditorStateAccess {
+  state: { lines: string[]; cursorLine: number; cursorCol: number };
+  pushUndoSnapshot?: () => void;
+  setCursorCol?: (col: number) => void;
+  lastAction?: unknown;
+  historyIndex?: number;
+}
+
+class PasterEditor extends CustomEditor {
+  private pasterPasteBuffer: string | undefined;
+  private activePreviewPlaceholder: string | undefined;
+  private previewOverlay: CursorImagePreviewOverlay | undefined;
+  private previewOverlayHandle: OverlayHandle | undefined;
+
+  constructor(
+    tui: TUI,
+    theme: EditorTheme,
+    private readonly pasterKeybindings: KeybindingsManager,
+    private readonly pasterOptions: {
+      cwd: string;
+      store: AttachmentStore;
+      notify: (message: string) => void;
+    },
+  ) {
+    super(tui, theme, pasterKeybindings);
+  }
+
+  override insertTextAtCursor(text: string): void {
+    const transformed = this.transform(text);
+    super.insertTextAtCursor(transformed.replaced > 0 ? transformed.text : text);
+    this.updateCursorPreview();
+  }
+
+  override handleInput(data: string): void {
+    if (this.handleBracketedPaste(data)) return;
+    if (this.handleAtomicPlaceholderDelete(data)) return;
+
+    super.handleInput(data);
+    this.updateCursorPreview();
+  }
+
+  private handleBracketedPaste(data: string): boolean {
+    let prefix = "";
+    const original = data;
+    const wasBuffered = this.pasterPasteBuffer !== undefined;
+
+    if (this.pasterPasteBuffer === undefined) {
+      const start = data.indexOf(PASTE_START);
+      if (start === -1) return false;
+      prefix = data.slice(0, start);
+      this.pasterPasteBuffer = data.slice(start + PASTE_START.length);
+      if (!this.pasterPasteBuffer.includes(PASTE_END)) {
+        if (prefix) super.handleInput(prefix);
+        return true;
+      }
+    } else {
+      this.pasterPasteBuffer += data;
+      if (!this.pasterPasteBuffer.includes(PASTE_END)) return true;
+    }
+
+    const end = this.pasterPasteBuffer.indexOf(PASTE_END);
+    const content = this.pasterPasteBuffer.slice(0, end);
+    const remaining = this.pasterPasteBuffer.slice(end + PASTE_END.length);
+    this.pasterPasteBuffer = undefined;
+
+    const transformed = this.transform(content);
+    if (transformed.replaced === 0) {
+      super.handleInput(
+        wasBuffered ? `${PASTE_START}${content}${PASTE_END}${remaining}` : original,
+      );
+      this.updateCursorPreview();
+      return true;
+    }
+
+    if (prefix) super.handleInput(prefix);
+    super.insertTextAtCursor(transformed.text);
+    if (remaining) super.handleInput(remaining);
+    this.updateCursorPreview();
+    return true;
+  }
+
+  private handleAtomicPlaceholderDelete(data: string): boolean {
+    const isBackspace = this.pasterKeybindings.matches(data, "tui.editor.deleteCharBackward");
+    const isDelete = this.pasterKeybindings.matches(data, "tui.editor.deleteCharForward");
+    if (!isBackspace && !isDelete) return false;
+    if (isDelete && this.getText().length === 0) return false;
+
+    const target = findPlaceholderAtCursor(
+      this.pasterOptions.store,
+      this.getLines(),
+      this.getCursor(),
+      isBackspace ? "backspace" : "delete",
+    );
+    if (!target) return false;
+
+    this.deleteLineRange(target.line, target.start, target.end);
+    this.updateCursorPreview();
+    return true;
+  }
+
+  private deleteLineRange(lineIndex: number, start: number, end: number): void {
+    const editor = this as unknown as EditorStateAccess;
+    editor.pushUndoSnapshot?.();
+    const line = editor.state.lines[lineIndex] ?? "";
+    editor.state.lines[lineIndex] = line.slice(0, start) + line.slice(end);
+    editor.state.cursorLine = lineIndex;
+    if (editor.setCursorCol) {
+      editor.setCursorCol(start);
+    } else {
+      editor.state.cursorCol = start;
+    }
+    editor.lastAction = null;
+    editor.historyIndex = -1;
+    this.onChange?.(this.getText());
+    this.tui.requestRender();
+  }
+
+  private transform(text: string): { text: string; replaced: number; accepted: ImageAttachment[] } {
+    return replaceImagePathsInText(text, {
+      cwd: this.pasterOptions.cwd,
+      store: this.pasterOptions.store,
+      onReject: (result) => {
+        if (result.reason === "too-large") {
+          this.pasterOptions.notify(
+            `paster: image is over 10 MB and was not attached: ${result.path}`,
+          );
+        }
+      },
+    });
+  }
+
+  clearCursorPreview(): void {
+    this.activePreviewPlaceholder = undefined;
+    this.previewOverlay = undefined;
+    this.previewOverlayHandle?.hide();
+    this.previewOverlayHandle = undefined;
+    this.tui.requestRender();
+  }
+
+  private updateCursorPreview(): void {
+    const target = findPlaceholderAtCursor(
+      this.pasterOptions.store,
+      this.getLines(),
+      this.getCursor(),
+      "hover",
+    );
+    const nextPlaceholder = target?.attachment.placeholder;
+    if (nextPlaceholder === this.activePreviewPlaceholder) return;
+    this.activePreviewPlaceholder = nextPlaceholder;
+
+    if (!target) {
+      this.clearCursorPreview();
+      return;
+    }
+
+    if (this.previewOverlay) {
+      this.previewOverlay.setAttachment(target.attachment);
+      this.tui.requestRender();
+      return;
+    }
+
+    this.previewOverlay = new CursorImagePreviewOverlay(target.attachment, {
+      border: this.borderColor,
+      title: (text) => text,
+      muted: (text) => text,
+      accent: (text) => text,
+    });
+    this.previewOverlayHandle = this.tui.showOverlay(this.previewOverlay, {
+      anchor: "top-right",
+      width: 64,
+      maxHeight: "70%",
+      margin: 1,
+      nonCapturing: true,
+      visible: (termWidth, termHeight) => termWidth >= 80 && termHeight >= 24,
+    });
+    this.tui.requestRender();
+  }
+}
 
 export type TerminalInputResult = { consume?: boolean; data?: string } | undefined;
 
@@ -390,6 +706,7 @@ export function createImagePasteTerminalInputHandler(options: {
 export default function paster(pi: ExtensionAPI): void {
   const store = new AttachmentStore();
   let pendingPreview: ImageAttachment[] = [];
+  let activeEditor: PasterEditor | undefined;
 
   pi.registerMessageRenderer<PasterPreviewDetails>("paster-preview", (message, _options, theme) => {
     const placeholders = message.details?.placeholders ?? [];
@@ -406,23 +723,32 @@ export default function paster(pi: ExtensionAPI): void {
     store.clear();
     pendingPreview = [];
     if (ctx.hasUI) {
-      ctx.ui.onTerminalInput(
-        createImagePasteTerminalInputHandler({
+      ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+        activeEditor = new PasterEditor(tui, theme, keybindings, {
           cwd: ctx.cwd,
           store,
           notify: (message) => ctx.ui.notify(message, "warning"),
-        }),
-      );
+        });
+        return activeEditor;
+      });
     }
   });
 
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", (_event, ctx) => {
     pendingPreview = [];
+    if (ctx.hasUI) {
+      activeEditor?.clearCursorPreview();
+      activeEditor = undefined;
+      ctx.ui.setEditorComponent(undefined);
+    }
     store.clear();
   });
 
-  pi.on("input", (event) => {
+  pi.on("input", (event, ctx) => {
     if (event.source === "extension") return { action: "continue" as const };
+    if (ctx.hasUI) {
+      activeEditor?.clearCursorPreview();
+    }
 
     const attachments = store.matchingPlaceholders(event.text);
     if (attachments.length === 0) return { action: "continue" as const };
