@@ -35,15 +35,31 @@ Terminal image workflows are awkward: dragging a screenshot into a terminal usua
   - atomic deletion of whole image placeholders
   - macOS clipboard image paste via pi's image paste keybinding
 
-## Usage
+## Installation
 
-Install or load the extension in pi, then start interactive mode.
+Once published to npm, install the package with pi:
+
+```bash
+pi install npm:paster
+```
+
+Or try it without installing:
+
+```bash
+pi -e npm:paster
+```
+
+> Note: the unscoped npm name `paster` is already taken. If this package is published under a scope, use that package name instead, for example `pi install npm:@your-scope/paster`.
 
 For local development/testing:
 
 ```bash
 pi -e .
 ```
+
+## Usage
+
+Start pi interactive mode with the extension enabled.
 
 Then paste or drag/drop an image path:
 
