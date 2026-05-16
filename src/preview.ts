@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import {
   getCellDimensions,
   Image,
@@ -28,10 +27,9 @@ export class ImagePreviewMessage implements Component {
   render(width: number): string[] {
     const lines: string[] = [];
     for (let index = 0; index < this.attachments.length; index++) {
+      const attachment = this.attachments[index]!;
       lines.push(
-        this.theme.fallbackColor(
-          `Attached ${this.attachments[index]!.placeholder} (${this.attachments[index]!.mimeType})`,
-        ),
+        this.theme.fallbackColor(`Attached ${attachment.placeholder} ${attachment.originalPath}`),
       );
       lines.push(...this.images[index]!.render(width));
     }
@@ -70,7 +68,7 @@ export class CursorImagePreviewWidget implements Component {
   }
 
   private headerLine(width: number): string {
-    const title = `${this.attachment.placeholder} ${basename(this.attachment.originalPath)}`;
+    const title = `Attached ${this.attachment.placeholder} ${this.attachment.originalPath}`;
     return this.theme.title(truncateToWidth(title, Math.max(1, width), ""));
   }
 
