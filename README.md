@@ -12,9 +12,9 @@ Instead of leaving raw local image paths in your prompt, paster replaces them wi
 
 ## Why this exists
 
-Terminal image workflows are awkward: dragging a screenshot into a terminal usually inserts a local file path, and pasting an image from the clipboard may require special handling. For multimodal models, that path is not enough—the image bytes need to be attached to the message.
+Terminal image workflows are awkward: dragging a screenshot into a terminal usually inserts a local file path, and pasting an image from the clipboard may require special handling. Even when a model could inspect a local file through tools, that adds friction and wastes context/tool-call budget compared with attaching the image directly.
 
-`paster` bridges that gap for pi interactive mode:
+`paster` makes image input feel native in pi interactive mode:
 
 1. Paste or drag/drop an image path into the editor.
 2. The path is replaced with a placeholder like `[#image 1]`.
