@@ -26,12 +26,12 @@ export class ImagePreviewMessage implements Component {
 
   render(width: number): string[] {
     const lines: string[] = [];
+    const safeWidth = Math.max(1, width);
     for (let index = 0; index < this.attachments.length; index++) {
       const attachment = this.attachments[index]!;
-      lines.push(
-        this.theme.fallbackColor(`Attached ${attachment.placeholder} ${attachment.originalPath}`),
-      );
-      lines.push(...this.images[index]!.render(width));
+      const label = `Attached ${attachment.placeholder} ${attachment.originalPath}`;
+      lines.push(this.theme.fallbackColor(truncateToWidth(label, safeWidth, "")));
+      lines.push(...this.images[index]!.render(safeWidth));
     }
     return lines;
   }

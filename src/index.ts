@@ -131,10 +131,17 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
     if (pendingPreview.length === 0) return;
     const placeholders = pendingPreview.map((attachment) => attachment.placeholder);
     pendingPreview = [];
+    // NOTE: pi core's convertToLlm() forwards custom messages to the model as a
+    // user message verbatim. An empty `content` becomes a text block with
+    // text: "" which Claude rejects with
+    //   400 messages: text content blocks must be non-empty
+    // The custom message is meant as a UI-only preview that mirrors the
+    // attachments already present in the *previous* user message, so we emit a
+    // minimal, model-readable summary instead of an empty string.
     return {
       message: {
         customType: "paster-preview",
-        content: "",
+        content: `(attachment preview: ${placeholders.join(", ")})`,
         display: true,
         details: { placeholders },
       },
