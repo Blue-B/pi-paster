@@ -16,6 +16,14 @@ interface PathToken {
   value: string;
   start: number;
   end: number;
+  bare: boolean;
+}
+
+const MAX_BARE_PATH_EXTENSIONS = 8;
+const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp)$/i;
+
+function looksLikeImagePath(value: string): boolean {
+  return IMAGE_EXTENSIONS.test(value);
 }
 
 export function detectImageMimeType(bytes: Uint8Array): SupportedImageMimeType | undefined {
@@ -125,7 +133,7 @@ export function tokenizePathLikeText(text: string): PathToken[] {
         index++;
       }
       if (closed && isPathLike(value))
-        tokens.push({ raw: text.slice(start, index), value, start, end: index });
+        tokens.push({ raw: text.slice(start, index), value, start, end: index, bare: false });
       continue;
     }
 
@@ -142,10 +150,53 @@ export function tokenizePathLikeText(text: string): PathToken[] {
       index++;
     }
     const value = shellUnescape(rawValue);
-    if (isPathLike(value)) tokens.push({ raw: rawValue, value, start, end: index });
+    if (isPathLike(value))
+      tokens.push({ raw: rawValue, value, start, end: index, bare: true });
   }
 
   return tokens;
+}
+
+function tryExtendBareToken(
+  text: string,
+  token: PathToken,
+  attempt: (path: string) => LoadImageResult,
+): { value: string; end: number; result: LoadImageResult } {
+  let value = token.value;
+  let end = token.end;
+  let lastResult = attempt(value);
+  if (lastResult.ok || !token.bare) return { value, end, result: lastResult };
+
+  let scan = end;
+  for (let i = 0; i < MAX_BARE_PATH_EXTENSIONS; i++) {
+    let wsEnd = scan;
+    while (wsEnd < text.length) {
+      const ch = text[wsEnd]!;
+      if (ch === "\n" || ch === "\r") break;
+      if (!/\s/.test(ch)) break;
+      wsEnd++;
+    }
+    if (wsEnd === scan) break;
+
+    let wordEnd = wsEnd;
+    while (wordEnd < text.length && !/\s/.test(text[wordEnd]!)) wordEnd++;
+    if (wordEnd === wsEnd) break;
+
+    const nextWord = shellUnescape(text.slice(wsEnd, wordEnd));
+    if (isPathLike(nextWord)) break;
+
+    const extendedValue = value + text.slice(scan, wsEnd) + nextWord;
+    const candidate = attempt(extendedValue);
+    scan = wordEnd;
+    if (candidate.ok) {
+      return { value: extendedValue, end: wordEnd, result: candidate };
+    }
+    value = extendedValue;
+    end = wordEnd;
+    lastResult = candidate;
+  }
+
+  return { value, end, result: lastResult };
 }
 
 export function dimensionsForImage(data: string, mimeType: SupportedImageMimeType) {
@@ -202,16 +253,18 @@ export function replaceImagePathsInText(
   const loadImage = options.loadImage ?? loadImageFromPath;
 
   for (const token of tokens) {
-    const result = loadImage(token.value, options.cwd);
-    if (!result.ok) {
-      options.onReject?.(result);
+    if (token.start < cursor) continue;
+
+    const extended = tryExtendBareToken(text, token, (path) => loadImage(path, options.cwd));
+    if (!extended.result.ok) {
+      if (looksLikeImagePath(extended.value)) options.onReject?.(extended.result);
       continue;
     }
 
-    const attachment = options.store.add(result.image);
+    const attachment = options.store.add(extended.result.image);
     accepted.push(attachment);
     output += text.slice(cursor, token.start) + attachment.placeholder;
-    cursor = token.end;
+    cursor = extended.end;
     replaced++;
   }
 
@@ -233,4 +286,28 @@ export function imagesForText(
       data: attachment.data,
     })),
   ];
+}
+
+export function describeReject(
+  result: Exclude<LoadImageResult, { ok: true }>,
+  notify?: (message: string) => void,
+): void {
+  if (!notify) return;
+  switch (result.reason) {
+    case "too-large":
+      notify(`paster: image is over 10 MB and was not attached: ${result.path}`);
+      return;
+    case "missing":
+      notify(`paster: file not found, not attached: ${result.path}`);
+      return;
+    case "not-file":
+      notify(`paster: path is not a file, not attached: ${result.path}`);
+      return;
+    case "unsupported":
+      notify(`paster: file is not PNG/JPEG/WebP/GIF, not attached: ${result.path}`);
+      return;
+    case "read-error":
+      notify(`paster: could not read file, not attached: ${result.path}`);
+      return;
+  }
 }
