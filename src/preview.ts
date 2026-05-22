@@ -4,8 +4,19 @@ import {
   type Component,
   type ImageTheme,
   truncateToWidth,
+  visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { ImageAttachment } from "./types.ts";
+
+function formatAttachmentLine(
+  attachment: ImageAttachment,
+  width: number,
+  style: (text: string) => string,
+): string {
+  const maxWidth = Math.max(1, width);
+  const line = style(`Attached ${attachment.placeholder} ${attachment.originalPath}`);
+  return visibleWidth(line) > maxWidth ? truncateToWidth(line, maxWidth, "") : line;
+}
 
 export class ImagePreviewMessage implements Component {
   private readonly images: Image[];
@@ -28,9 +39,7 @@ export class ImagePreviewMessage implements Component {
     const lines: string[] = [];
     for (let index = 0; index < this.attachments.length; index++) {
       const attachment = this.attachments[index]!;
-      lines.push(
-        this.theme.fallbackColor(`Attached ${attachment.placeholder} ${attachment.originalPath}`),
-      );
+      lines.push(formatAttachmentLine(attachment, width, this.theme.fallbackColor));
       lines.push(...this.images[index]!.render(width));
     }
     return lines;
@@ -68,8 +77,7 @@ export class CursorImagePreviewWidget implements Component {
   }
 
   private headerLine(width: number): string {
-    const title = `Attached ${this.attachment.placeholder} ${this.attachment.originalPath}`;
-    return this.theme.title(truncateToWidth(title, Math.max(1, width), ""));
+    return formatAttachmentLine(this.attachment, width, this.theme.title);
   }
 
   private createImage(attachment: ImageAttachment, maxWidthCells = 60): Image {

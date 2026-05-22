@@ -110,6 +110,15 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
     store.clear();
   });
 
+  function previewMessage(attachments: ImageAttachment[]) {
+    return {
+      customType: "paster-preview",
+      content: "",
+      display: true,
+      details: { placeholders: attachments.map((attachment) => attachment.placeholder) },
+    };
+  }
+
   pi.on("input", (event, ctx) => {
     if (event.source === "extension") return { action: "continue" as const };
     if (ctx.hasUI) {
@@ -118,7 +127,14 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
 
     const attachments = store.matchingPlaceholders(event.text);
     if (attachments.length === 0) return { action: "continue" as const };
-    pendingPreview = attachments;
+
+    if (ctx.isIdle()) {
+      pendingPreview = attachments;
+    } else {
+      // Queued steer/follow-up messages do not fire before_agent_start when they are
+      // later delivered by the running agent, so enqueue the preview alongside them now.
+      pi.sendMessage(previewMessage(attachments), { deliverAs: "followUp" });
+    }
 
     return {
       action: "transform" as const,
@@ -129,15 +145,8 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
 
   pi.on("before_agent_start", () => {
     if (pendingPreview.length === 0) return;
-    const placeholders = pendingPreview.map((attachment) => attachment.placeholder);
+    const message = previewMessage(pendingPreview);
     pendingPreview = [];
-    return {
-      message: {
-        customType: "paster-preview",
-        content: "",
-        display: true,
-        details: { placeholders },
-      },
-    };
+    return { message };
   });
 }
