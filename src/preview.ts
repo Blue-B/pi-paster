@@ -37,10 +37,11 @@ export class ImagePreviewMessage implements Component {
 
   render(width: number): string[] {
     const lines: string[] = [];
+    const safeWidth = Math.max(1, width);
     for (let index = 0; index < this.attachments.length; index++) {
       const attachment = this.attachments[index]!;
-      lines.push(formatAttachmentLine(attachment, width, this.theme.fallbackColor));
-      lines.push(...this.images[index]!.render(width));
+      lines.push(formatAttachmentLine(attachment, safeWidth, this.theme.fallbackColor));
+      lines.push(...this.images[index]!.render(safeWidth));
     }
     return lines;
   }

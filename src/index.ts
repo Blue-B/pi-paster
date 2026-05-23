@@ -2,13 +2,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readClipboardImage } from "./clipboard.ts";
 import { type PasterConfig, resolvePasterConfig } from "./config.ts";
 import { PasterEditor } from "./editor.ts";
-import { imagesForText } from "./image-utils.ts";
+import { imagesForTextOptimized } from "./image-utils.ts";
 import { CursorImagePreviewWidget, ImagePreviewMessage } from "./preview.ts";
 import { AttachmentStore } from "./store.ts";
 import { createImagePasteTerminalInputHandler } from "./terminal-input.ts";
 import type { ImageAttachment, PasterPreviewDetails } from "./types.ts";
 
 export * from "./clipboard.ts";
+export * from "./optimize-image.ts";
 export * from "./config.ts";
 export * from "./editor.ts";
 export * from "./image-utils.ts";
@@ -111,15 +112,16 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
   });
 
   function previewMessage(attachments: ImageAttachment[]) {
+    const placeholders = attachments.map((attachment) => attachment.placeholder);
     return {
       customType: "paster-preview",
-      content: "",
+      content: `(attachment preview: ${placeholders.join(", ")})`,
       display: true,
-      details: { placeholders: attachments.map((attachment) => attachment.placeholder) },
+      details: { placeholders },
     };
   }
 
-  pi.on("input", (event, ctx) => {
+  pi.on("input", async (event, ctx) => {
     if (event.source === "extension") return { action: "continue" as const };
     if (ctx.hasUI) {
       activeEditor?.clearCursorPreview();
@@ -136,10 +138,15 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
       pi.sendMessage(previewMessage(attachments), { deliverAs: "followUp" });
     }
 
+    // Optimize images on-submit so we never exceed Anthropic's 5 MB/image or
+    // 32 MB/request caps. Per-attachment caching means each image is only
+    // resized/recompressed once across the whole session.
+    const images = await imagesForTextOptimized(store, event.text, event.images);
+
     return {
       action: "transform" as const,
       text: event.text,
-      images: imagesForText(store, event.text, event.images),
+      images,
     };
   });
 

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
+import { platform } from "node:process";
 import { getImageDimensions } from "@earendil-works/pi-tui";
 import type { AttachmentStore } from "./store.ts";
 import {
@@ -10,6 +11,7 @@ import {
   type PasterImageContent,
   type SupportedImageMimeType,
 } from "./types.ts";
+import { optimizeImageBytes } from "./optimize-image.ts";
 
 interface PathToken {
   raw: string;
@@ -65,9 +67,62 @@ export function detectImageMimeType(bytes: Uint8Array): SupportedImageMimeType |
   return undefined;
 }
 
+const WINDOWS_DRIVE_PATH = /^([a-zA-Z]):[\\/](.*)$/;
+
+export function isWindowsDrivePath(value: string): boolean {
+  return WINDOWS_DRIVE_PATH.test(value);
+}
+
+export function isWindowsUncPath(value: string): boolean {
+  return value.startsWith("\\\\") && value.length > 2;
+}
+
+export function isWindowsLikePath(value: string): boolean {
+  return isWindowsDrivePath(value) || isWindowsUncPath(value);
+}
+
+let cachedIsWsl: boolean | undefined;
+export function isWsl(): boolean {
+  if (cachedIsWsl !== undefined) return cachedIsWsl;
+  if (platform !== "linux") {
+    cachedIsWsl = false;
+    return cachedIsWsl;
+  }
+  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) {
+    cachedIsWsl = true;
+    return cachedIsWsl;
+  }
+  try {
+    const release = readFileSync("/proc/version", "utf8");
+    cachedIsWsl = /microsoft|wsl/i.test(release);
+  } catch {
+    cachedIsWsl = false;
+  }
+  return cachedIsWsl;
+}
+
+export function windowsToWslPath(windowsPath: string): string {
+  const driveMatch = WINDOWS_DRIVE_PATH.exec(windowsPath);
+  if (driveMatch) {
+    const drive = driveMatch[1]!.toLowerCase();
+    const rest = driveMatch[2]!.replace(/\\/g, "/");
+    return rest.length > 0 ? `/mnt/${drive}/${rest}` : `/mnt/${drive}`;
+  }
+  if (isWindowsUncPath(windowsPath)) {
+    // \\server\share\path -> //wsl.localhost-style not generally translatable; pass through.
+    return windowsPath.replace(/\\/g, "/");
+  }
+  return windowsPath;
+}
+
 export function resolveImagePath(input: string, cwd: string): string {
   if (input === "~") return homedir();
   if (input.startsWith("~/")) return resolve(homedir(), input.slice(2));
+  if (isWindowsLikePath(input)) {
+    if (platform === "win32") return input;
+    if (isWsl()) return windowsToWslPath(input);
+    return input;
+  }
   if (isAbsolute(input)) return input;
   return resolve(cwd, input);
 }
@@ -91,8 +146,24 @@ function isPathLike(value: string): boolean {
     value.startsWith("~/") ||
     value === "~" ||
     value.startsWith("./") ||
-    value.startsWith("../")
+    value.startsWith("../") ||
+    isWindowsLikePath(value)
   );
+}
+
+function startsWithWindowsPath(text: string, index: number): boolean {
+  if (
+    index + 2 < text.length &&
+    /[a-zA-Z]/.test(text[index]!) &&
+    text[index + 1] === ":" &&
+    (text[index + 2] === "\\" || text[index + 2] === "/")
+  ) {
+    return true;
+  }
+  if (index + 1 < text.length && text[index] === "\\" && text[index + 1] === "\\") {
+    return true;
+  }
+  return false;
 }
 
 export function tokenizePathLikeText(text: string): PathToken[] {
@@ -110,11 +181,12 @@ export function tokenizePathLikeText(text: string): PathToken[] {
     if (char === "'" || char === '"') {
       const quote = char;
       index++;
+      const windowsMode = startsWithWindowsPath(text, index);
       let value = "";
       let closed = false;
       while (index < text.length) {
         const current = text[index]!;
-        if (current === "\\" && quote === '"' && index + 1 < text.length) {
+        if (!windowsMode && current === "\\" && quote === '"' && index + 1 < text.length) {
           value += text[index + 1]!;
           index += 2;
           continue;
@@ -132,11 +204,12 @@ export function tokenizePathLikeText(text: string): PathToken[] {
       continue;
     }
 
+    const windowsMode = startsWithWindowsPath(text, index);
     let rawValue = "";
     while (index < text.length) {
       const current = text[index]!;
       if (/\s/.test(current)) break;
-      if (current === "\\" && index + 1 < text.length) {
+      if (!windowsMode && current === "\\" && index + 1 < text.length) {
         rawValue += current + text[index + 1]!;
         index += 2;
         continue;
@@ -144,7 +217,7 @@ export function tokenizePathLikeText(text: string): PathToken[] {
       rawValue += current;
       index++;
     }
-    const value = shellUnescape(rawValue);
+    const value = windowsMode ? rawValue : shellUnescape(rawValue);
     if (isPathLike(value)) tokens.push({ raw: rawValue, value, start, end: index, bare: true });
   }
 
@@ -284,12 +357,61 @@ export function imagesForText(
   ];
 }
 
+/**
+ * Async variant of imagesForText that runs each attachment through the
+ * Anthropic-aware image optimizer (resize to 8000px cap, JPEG ladder to stay
+ * under the 5 MB / 32 MB request caps). Optimization is cached on the
+ * attachment so the cost is paid once per image, not per submit.
+ *
+ * Used by paster's `input` handler; safe to await on the hot path because
+ * sharp is only invoked when the image is actually over the limits.
+ */
+export async function imagesForTextOptimized(
+  store: AttachmentStore,
+  text: string,
+  existing: PasterImageContent[] = [],
+): Promise<PasterImageContent[]> {
+  const attachments = store.matchingPlaceholders(text);
+  const optimized: PasterImageContent[] = [];
+  for (const attachment of attachments) {
+    if (!attachment.optimized) {
+      try {
+        const input = Buffer.from(attachment.data, "base64");
+        const result = await optimizeImageBytes(input, attachment.mimeType);
+        if (result.changed) {
+          attachment.data = result.data;
+          attachment.mimeType = result.mimeType;
+          if (result.finalDim) {
+            attachment.dimensions = {
+              widthPx: result.finalDim.width,
+              heightPx: result.finalDim.height,
+            };
+          }
+        }
+        attachment.optimized = true;
+        attachment.originalBytes = result.originalBytes;
+        attachment.finalBytes = result.finalBytes;
+        attachment.optimizeActions = result.actions;
+      } catch {
+        // optimization is best-effort; fall through with the original bytes
+        attachment.optimized = true;
+      }
+    }
+    optimized.push({
+      type: "image",
+      mimeType: attachment.mimeType,
+      data: attachment.data,
+    });
+  }
+  return [...existing, ...optimized];
+}
+
 export function describeReject(
   result: Exclude<LoadImageResult, { ok: true }>,
   notify?: (message: string) => void,
 ): void {
   if (!notify) return;
   if (result.reason === "too-large") {
-    notify(`paster: image is over 10 MB and was not attached: ${result.path}`);
+    notify(`paster: image is too large and was not attached: ${result.path}`);
   }
 }
