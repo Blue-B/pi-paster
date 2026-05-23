@@ -96,6 +96,7 @@ import { createPaster } from "pi-paster";
 
 export default createPaster({
   submittedPreviewStyle: "raw",
+  includeImagePathsInPrompt: true,
   customEditor: {
     enabled: true,
     showImagePreview: true,
@@ -109,6 +110,7 @@ export default createPaster({
 | Option                                  | Default | Description                                                                                                                             |
 | --------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `submittedPreviewStyle`                 | `"raw"` | How submitted image previews render in chat history. Use `"collapsible"` to wrap them in pi's ctrl+o expandable/collapsible message UI. |
+| `includeImagePathsInPrompt`             | `true`  | Appends placeholder-to-local-path mappings to the submitted prompt so the agent can manipulate the source image files when asked.       |
 | `customEditor.enabled`                  | `true`  | Replaces pi's input editor with paster's editor integration. Disable this to keep pi's default editor.                                  |
 | `customEditor.showImagePreview`         | `true`  | Shows an image preview above the input when the cursor is inside an image placeholder. Requires `customEditor.enabled`.                 |
 | `customEditor.deletePlaceholderAsBlock` | `true`  | Makes backspace/delete remove the whole placeholder when editing inside or adjacent to it. Requires `customEditor.enabled`.             |

@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vite-plus/test";
-import { AttachmentStore, replaceImagePathsInText, tokenizePathLikeText } from "../src/index.ts";
+import {
+  appendImagePathContext,
+  AttachmentStore,
+  replaceImagePathsInText,
+  tokenizePathLikeText,
+} from "../src/index.ts";
 
 const PNG_BYTES = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -241,5 +246,17 @@ describe("diagnostic notifications", () => {
       onReject: (r) => messages.push(`${r.reason}:${r.path}`),
     });
     expect(messages).toEqual([`too-large:${big}`]);
+  });
+});
+
+describe("appendImagePathContext", () => {
+  test("adds placeholder-to-path mapping for attached images", () => {
+    const store = new AttachmentStore();
+    const first = store.add({ originalPath: "/tmp/a.png", mimeType: "image/png", data: "" });
+    const second = store.add({ originalPath: "/tmp/b.png", mimeType: "image/png", data: "" });
+
+    expect(appendImagePathContext(`look ${first.placeholder}`, [first, second])).toBe(
+      `look ${first.placeholder}\n\nAttached image paths:\n- ${first.placeholder}: /tmp/a.png\n- ${second.placeholder}: /tmp/b.png`,
+    );
   });
 });

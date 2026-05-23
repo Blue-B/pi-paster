@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readClipboardImage } from "./clipboard.ts";
 import { type PasterConfig, resolvePasterConfig } from "./config.ts";
 import { PasterEditor } from "./editor.ts";
-import { imagesForTextOptimized } from "./image-utils.ts";
+import { appendImagePathContext, imagesForTextOptimized } from "./image-utils.ts";
 import { CursorImagePreviewWidget, ImagePreviewMessage } from "./preview.ts";
 import { AttachmentStore } from "./store.ts";
 import { createImagePasteTerminalInputHandler } from "./terminal-input.ts";
@@ -149,10 +149,13 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
     // 32 MB/request caps. Per-attachment caching means each image is only
     // resized/recompressed once across the whole session.
     const images = await imagesForTextOptimized(store, event.text, event.images);
+    const text = resolvedConfig.includeImagePathsInPrompt
+      ? appendImagePathContext(event.text, attachments)
+      : event.text;
 
     return {
       action: "transform" as const,
-      text: event.text,
+      text,
       images,
     };
   });

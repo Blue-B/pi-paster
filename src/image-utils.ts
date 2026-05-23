@@ -357,6 +357,14 @@ export function imagesForText(
   ];
 }
 
+export function appendImagePathContext(text: string, attachments: ImageAttachment[]): string {
+  if (attachments.length === 0) return text;
+  const lines = attachments.map(
+    (attachment) => `- ${attachment.placeholder}: ${attachment.originalPath}`,
+  );
+  return `${text}\n\nAttached image paths:\n${lines.join("\n")}`;
+}
+
 /**
  * Async variant of imagesForText that runs each attachment through the
  * Anthropic-aware image optimizer (resize to 8000px cap, JPEG ladder to stay
