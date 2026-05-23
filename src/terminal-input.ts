@@ -1,5 +1,5 @@
 import { PASTE_END, PASTE_START } from "./editor.ts";
-import { replaceImagePathsInText } from "./image-utils.ts";
+import { describeReject, replaceImagePathsInText } from "./image-utils.ts";
 import type { AttachmentStore } from "./store.ts";
 import type { ImageAttachment, LoadImageResult } from "./types.ts";
 
@@ -19,11 +19,7 @@ export function createImagePasteTerminalInputHandler(options: {
       cwd: options.cwd,
       store: options.store,
       loadImage: options.loadImage,
-      onReject: (result) => {
-        if (result.reason === "too-large") {
-          options.notify?.(`paster: image is over 10 MB and was not attached: ${result.path}`);
-        }
-      },
+      onReject: (result) => describeReject(result, options.notify),
     });
 
   return (data: string): TerminalInputResult => {

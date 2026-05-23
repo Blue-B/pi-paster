@@ -1,6 +1,6 @@
 import { CustomEditor, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { replaceImagePathsInText } from "./image-utils.ts";
+import { describeReject, replaceImagePathsInText } from "./image-utils.ts";
 import type { AttachmentStore } from "./store.ts";
 import type { ImageAttachment } from "./types.ts";
 
@@ -189,13 +189,7 @@ export class PasterEditor extends CustomEditor {
     return replaceImagePathsInText(text, {
       cwd: this.pasterOptions.cwd,
       store: this.pasterOptions.store,
-      onReject: (result) => {
-        if (result.reason === "too-large") {
-          this.pasterOptions.notify(
-            `paster: image is over 10 MB and was not attached: ${result.path}`,
-          );
-        }
-      },
+      onReject: (result) => describeReject(result, this.pasterOptions.notify),
     });
   }
 
