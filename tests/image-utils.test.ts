@@ -2,11 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vite-plus/test";
-import {
-  AttachmentStore,
-  replaceImagePathsInText,
-  tokenizePathLikeText,
-} from "../src/index.ts";
+import { AttachmentStore, replaceImagePathsInText, tokenizePathLikeText } from "../src/index.ts";
 
 const PNG_BYTES = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -119,7 +115,10 @@ describe("replaceImagePathsInText with spaces", () => {
 
     // Mimic real macOS paste: most spaces escaped with \ but space before "AM.png" raw.
     const escapeMost = (p: string) =>
-      p.replace(/ (?=\d)/g, "\\ ").replace(/ (?=at)/g, "\\ ").replace(/ (?=\d\d:)/g, "\\ ");
+      p
+        .replace(/ (?=\d)/g, "\\ ")
+        .replace(/ (?=at)/g, "\\ ")
+        .replace(/ (?=\d\d:)/g, "\\ ");
     const text = `${escapeMost(a)} ${escapeMost(b)}`;
 
     const result = replaceImagePathsInText(text, { cwd: "/", store });
@@ -137,7 +136,10 @@ describe("replaceImagePathsInText with spaces", () => {
     writeFileSync(b, PNG_BYTES);
 
     const escape = (p: string) =>
-      p.replace(/ (?=\d)/g, "\\ ").replace(/ (?=at)/g, "\\ ").replace(/ (?=\d\d:)/g, "\\ ");
+      p
+        .replace(/ (?=\d)/g, "\\ ")
+        .replace(/ (?=at)/g, "\\ ")
+        .replace(/ (?=\d\d:)/g, "\\ ");
     const text = `${escape(a)} \n${escape(b)} \nNot yet`;
 
     const result = replaceImagePathsInText(text, { cwd: "/", store });
@@ -188,7 +190,7 @@ describe("diagnostic notifications", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("missing image path notifies user", () => {
+  test("missing image path does not notify user", () => {
     const store = new AttachmentStore();
     const messages: string[] = [];
     const ghost = join(dir, "ghost.png");
@@ -197,7 +199,7 @@ describe("diagnostic notifications", () => {
       store,
       onReject: (r) => messages.push(r.reason),
     });
-    expect(messages).toEqual(["missing"]);
+    expect(messages).toEqual([]);
   });
 
   test("non-image path token does not notify", () => {
@@ -211,7 +213,7 @@ describe("diagnostic notifications", () => {
     expect(messages).toEqual([]);
   });
 
-  test("unsupported file format notifies user", () => {
+  test("unsupported file format does not notify user", () => {
     const store = new AttachmentStore();
     const messages: string[] = [];
     const txt = join(dir, "note.png");
@@ -221,6 +223,23 @@ describe("diagnostic notifications", () => {
       store,
       onReject: (r) => messages.push(r.reason),
     });
-    expect(messages).toEqual(["unsupported"]);
+    expect(messages).toEqual([]);
+  });
+
+  test("oversized image path notifies user even without image extension", () => {
+    const store = new AttachmentStore();
+    const messages: string[] = [];
+    const big = join(dir, "big file");
+    const text = `${big} trailing words`;
+    replaceImagePathsInText(text, {
+      cwd: "/",
+      store,
+      loadImage: (path) =>
+        path === big
+          ? { ok: false, reason: "too-large", path }
+          : { ok: false, reason: "missing", path },
+      onReject: (r) => messages.push(`${r.reason}:${r.path}`),
+    });
+    expect(messages).toEqual([`too-large:${big}`]);
   });
 });

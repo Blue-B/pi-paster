@@ -20,11 +20,6 @@ interface PathToken {
 }
 
 const MAX_BARE_PATH_EXTENSIONS = 8;
-const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp)$/i;
-
-function looksLikeImagePath(value: string): boolean {
-  return IMAGE_EXTENSIONS.test(value);
-}
 
 export function detectImageMimeType(bytes: Uint8Array): SupportedImageMimeType | undefined {
   if (
@@ -150,8 +145,7 @@ export function tokenizePathLikeText(text: string): PathToken[] {
       index++;
     }
     const value = shellUnescape(rawValue);
-    if (isPathLike(value))
-      tokens.push({ raw: rawValue, value, start, end: index, bare: true });
+    if (isPathLike(value)) tokens.push({ raw: rawValue, value, start, end: index, bare: true });
   }
 
   return tokens;
@@ -165,7 +159,9 @@ function tryExtendBareToken(
   let value = token.value;
   let end = token.end;
   let lastResult = attempt(value);
-  if (lastResult.ok || !token.bare) return { value, end, result: lastResult };
+  if (lastResult.ok || lastResult.reason === "too-large" || !token.bare) {
+    return { value, end, result: lastResult };
+  }
 
   let scan = end;
   for (let i = 0; i < MAX_BARE_PATH_EXTENSIONS; i++) {
@@ -188,7 +184,7 @@ function tryExtendBareToken(
     const extendedValue = value + text.slice(scan, wsEnd) + nextWord;
     const candidate = attempt(extendedValue);
     scan = wordEnd;
-    if (candidate.ok) {
+    if (candidate.ok || candidate.reason === "too-large") {
       return { value: extendedValue, end: wordEnd, result: candidate };
     }
     value = extendedValue;
@@ -257,7 +253,7 @@ export function replaceImagePathsInText(
 
     const extended = tryExtendBareToken(text, token, (path) => loadImage(path, options.cwd));
     if (!extended.result.ok) {
-      if (looksLikeImagePath(extended.value)) options.onReject?.(extended.result);
+      if (extended.result.reason === "too-large") options.onReject?.(extended.result);
       continue;
     }
 
@@ -293,21 +289,7 @@ export function describeReject(
   notify?: (message: string) => void,
 ): void {
   if (!notify) return;
-  switch (result.reason) {
-    case "too-large":
-      notify(`paster: image is over 10 MB and was not attached: ${result.path}`);
-      return;
-    case "missing":
-      notify(`paster: file not found, not attached: ${result.path}`);
-      return;
-    case "not-file":
-      notify(`paster: path is not a file, not attached: ${result.path}`);
-      return;
-    case "unsupported":
-      notify(`paster: file is not PNG/JPEG/WebP/GIF, not attached: ${result.path}`);
-      return;
-    case "read-error":
-      notify(`paster: could not read file, not attached: ${result.path}`);
-      return;
+  if (result.reason === "too-large") {
+    notify(`paster: image is over 10 MB and was not attached: ${result.path}`);
   }
 }
