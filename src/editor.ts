@@ -7,6 +7,59 @@ import type { ImageAttachment } from "./types.ts";
 export const PASTE_START = "\x1b[200~";
 export const PASTE_END = "\x1b[201~";
 const PLACEHOLDER_REGEX = /\[#image \d+\]/g;
+const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
+const baseSegmenter = new Intl.Segmenter();
+
+interface AtomicSpan {
+  start: number;
+  end: number;
+}
+
+interface EditorSegmentationAccess {
+  segment?: (text: string) => Iterable<Intl.SegmentData>;
+  pastes?: Map<number, string>;
+}
+
+function atomicSpansForText(text: string, validPasteIds: Set<number>): AtomicSpan[] {
+  const spans: AtomicSpan[] = [];
+
+  for (const match of text.matchAll(PASTE_MARKER_REGEX)) {
+    const id = Number.parseInt(match[1]!, 10);
+    if (!validPasteIds.has(id)) continue;
+    spans.push({ start: match.index, end: match.index + match[0].length });
+  }
+
+  for (const match of text.matchAll(PLACEHOLDER_REGEX)) {
+    const placeholder = match[0];
+    spans.push({ start: match.index, end: match.index + placeholder.length });
+  }
+
+  return spans.sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+export function segmentTextWithAtomicImages(
+  text: string,
+  store: AttachmentStore,
+  validPasteIds: Set<number> = new Set(),
+): Intl.SegmentData[] {
+  const spans = atomicSpansForText(text, validPasteIds);
+  if (spans.length === 0) return [...baseSegmenter.segment(text)];
+
+  const result: Intl.SegmentData[] = [];
+  let spanIndex = 0;
+  for (const segment of baseSegmenter.segment(text)) {
+    while (spanIndex < spans.length && spans[spanIndex]!.end <= segment.index) spanIndex++;
+    const span = spans[spanIndex];
+    if (span && segment.index >= span.start && segment.index < span.end) {
+      if (segment.index === span.start) {
+        result.push({ segment: text.slice(span.start, span.end), index: span.start, input: text });
+      }
+      continue;
+    }
+    result.push(segment);
+  }
+  return result;
+}
 
 interface EditorCursor {
   line: number;
@@ -14,7 +67,8 @@ interface EditorCursor {
 }
 
 interface PlaceholderAtCursor {
-  attachment: ImageAttachment;
+  attachment?: ImageAttachment;
+  placeholder: string;
   line: number;
   start: number;
   end: number;
@@ -32,16 +86,16 @@ function findPlaceholderAtCursor(
     const start = match.index;
     const end = start + placeholder.length;
     const attachment = store.get(placeholder);
-    if (!attachment) continue;
+    if (!attachment && mode !== "hover") continue;
 
     if (mode === "hover" && cursor.col >= start && cursor.col < end) {
-      return { attachment, line: cursor.line, start, end };
+      return { attachment, placeholder, line: cursor.line, start, end };
     }
     if (mode === "backspace" && cursor.col > start && cursor.col <= end) {
-      return { attachment, line: cursor.line, start, end };
+      return { attachment, placeholder, line: cursor.line, start, end };
     }
     if (mode === "delete" && cursor.col >= start && cursor.col < end) {
-      return { attachment, line: cursor.line, start, end };
+      return { attachment, placeholder, line: cursor.line, start, end };
     }
   }
   return undefined;
@@ -76,6 +130,7 @@ export class PasterEditor extends CustomEditor {
     },
   ) {
     super(tui, theme, pasterKeybindings);
+    this.installAtomicImageSegmentation();
     this.onPasteImage = () => {
       void this.handlePasteClipboardImage();
     };
@@ -89,6 +144,7 @@ export class PasterEditor extends CustomEditor {
 
   override handleInput(data: string): void {
     if (this.handleBracketedPaste(data)) return;
+    if (this.handleAtomicPlaceholderNavigation(data)) return;
     if (this.pasterOptions.deletePlaceholderAsBlock && this.handleAtomicPlaceholderDelete(data))
       return;
 
@@ -99,6 +155,16 @@ export class PasterEditor extends CustomEditor {
   clearCursorPreview(): void {
     this.activePreviewPlaceholder = undefined;
     this.pasterOptions.setCursorPreview(undefined);
+  }
+
+  private installAtomicImageSegmentation(): void {
+    const editor = this as unknown as EditorSegmentationAccess;
+    editor.segment = (text: string) =>
+      segmentTextWithAtomicImages(
+        text,
+        this.pasterOptions.store,
+        new Set(editor.pastes?.keys() ?? []),
+      );
   }
 
   private async handlePasteClipboardImage(): Promise<void> {
@@ -149,6 +215,29 @@ export class PasterEditor extends CustomEditor {
     return true;
   }
 
+  private handleAtomicPlaceholderNavigation(data: string): boolean {
+    const isLeft = this.pasterKeybindings.matches(data, "tui.editor.cursorLeft");
+    const isRight = this.pasterKeybindings.matches(data, "tui.editor.cursorRight");
+    if (!isLeft && !isRight) return false;
+
+    const line = this.getLines()[this.getCursor().line] ?? "";
+    const cursor = this.getCursor();
+    const matches = [...line.matchAll(PLACEHOLDER_REGEX)];
+    const target = isRight
+      ? matches.find(
+          (match) => cursor.col >= match.index && cursor.col < match.index + match[0].length,
+        )
+      : matches.find(
+          (match) => cursor.col > match.index && cursor.col <= match.index + match[0].length,
+        );
+    if (!target) return false;
+
+    this.setCursor(target.index + (isRight ? target[0].length : 0));
+    this.updateCursorPreview();
+    this.tui.requestRender();
+    return true;
+  }
+
   private handleAtomicPlaceholderDelete(data: string): boolean {
     const isBackspace = this.pasterKeybindings.matches(data, "tui.editor.deleteCharBackward");
     const isDelete = this.pasterKeybindings.matches(data, "tui.editor.deleteCharForward");
@@ -168,17 +257,22 @@ export class PasterEditor extends CustomEditor {
     return true;
   }
 
+  private setCursor(col: number): void {
+    const editor = this as unknown as EditorStateAccess;
+    if (editor.setCursorCol) {
+      editor.setCursorCol(col);
+    } else {
+      editor.state.cursorCol = col;
+    }
+  }
+
   private deleteLineRange(lineIndex: number, start: number, end: number): void {
     const editor = this as unknown as EditorStateAccess;
     editor.pushUndoSnapshot?.();
     const line = editor.state.lines[lineIndex] ?? "";
     editor.state.lines[lineIndex] = line.slice(0, start) + line.slice(end);
     editor.state.cursorLine = lineIndex;
-    if (editor.setCursorCol) {
-      editor.setCursorCol(start);
-    } else {
-      editor.state.cursorCol = start;
-    }
+    this.setCursor(start);
     editor.lastAction = null;
     editor.historyIndex = -1;
     this.onChange?.(this.getText());
@@ -200,7 +294,7 @@ export class PasterEditor extends CustomEditor {
       this.getCursor(),
       "hover",
     );
-    const nextPlaceholder = target?.attachment.placeholder;
+    const nextPlaceholder = target?.attachment?.placeholder;
     if (nextPlaceholder === this.activePreviewPlaceholder) return;
     this.activePreviewPlaceholder = nextPlaceholder;
     this.pasterOptions.setCursorPreview(target?.attachment);
