@@ -1,4 +1,8 @@
+export type SubmittedPreviewStyle = "raw" | "collapsible";
+
 export interface PasterConfig {
+  /** How submitted attachment previews render in chat history. */
+  submittedPreviewStyle?: SubmittedPreviewStyle;
   customEditor?: {
     /** Replace pi's input editor to enable inline image UX features. */
     enabled?: boolean;
@@ -10,6 +14,7 @@ export interface PasterConfig {
 }
 
 export interface ResolvedPasterConfig {
+  submittedPreviewStyle: SubmittedPreviewStyle;
   customEditor: {
     enabled: boolean;
     showImagePreview: boolean;
@@ -18,6 +23,7 @@ export interface ResolvedPasterConfig {
 }
 
 export const DEFAULT_PASTER_CONFIG: ResolvedPasterConfig = {
+  submittedPreviewStyle: "raw",
   customEditor: {
     enabled: true,
     showImagePreview: true,
@@ -27,6 +33,8 @@ export const DEFAULT_PASTER_CONFIG: ResolvedPasterConfig = {
 
 export function resolvePasterConfig(config: PasterConfig = {}): ResolvedPasterConfig {
   return {
+    submittedPreviewStyle:
+      config.submittedPreviewStyle ?? DEFAULT_PASTER_CONFIG.submittedPreviewStyle,
     customEditor: {
       enabled: config.customEditor?.enabled ?? DEFAULT_PASTER_CONFIG.customEditor.enabled,
       showImagePreview:

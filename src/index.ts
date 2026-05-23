@@ -29,15 +29,22 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
   let activeEditor: PasterEditor | undefined;
   let unsubscribeTerminalInput: (() => void) | undefined;
 
-  pi.registerMessageRenderer<PasterPreviewDetails>("paster-preview", (message, _options, theme) => {
+  pi.registerMessageRenderer<PasterPreviewDetails>("paster-preview", (message, options, theme) => {
     const placeholders = message.details?.placeholders ?? [];
     const attachments = store
       .list()
       .filter((attachment) => placeholders.includes(attachment.placeholder));
     if (attachments.length === 0) return undefined;
-    return new ImagePreviewMessage(attachments, {
-      fallbackColor: (text) => theme.fg("muted", text),
-    });
+    return new ImagePreviewMessage(
+      attachments,
+      {
+        fallbackColor: (text) => theme.fg("muted", text),
+        background: (text) => theme.bg("toolSuccessBg", text),
+        title: (text) => theme.fg("toolTitle", theme.bold(text)),
+        muted: (text) => theme.fg("muted", text),
+      },
+      { expanded: options.expanded, style: resolvedConfig.submittedPreviewStyle },
+    );
   });
 
   pi.on("session_start", (_event, ctx) => {

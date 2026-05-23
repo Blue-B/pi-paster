@@ -1,8 +1,12 @@
 import {
+  Box,
+  Container,
   getCellDimensions,
   Image,
   type Component,
   type ImageTheme,
+  Spacer,
+  Text,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -18,12 +22,21 @@ function formatAttachmentLine(
   return visibleWidth(line) > maxWidth ? truncateToWidth(line, maxWidth, "") : line;
 }
 
+export type ImagePreviewMessageStyle = "raw" | "collapsible";
+
+interface ImagePreviewMessageTheme extends ImageTheme {
+  background?: (text: string) => string;
+  title?: (text: string) => string;
+  muted?: (text: string) => string;
+}
+
 export class ImagePreviewMessage implements Component {
   private readonly images: Image[];
 
   constructor(
     private readonly attachments: ImageAttachment[],
-    private readonly theme: ImageTheme,
+    private readonly theme: ImagePreviewMessageTheme,
+    private readonly options: { expanded?: boolean; style?: ImagePreviewMessageStyle } = {},
   ) {
     this.images = attachments.map(
       (attachment) =>
@@ -35,7 +48,17 @@ export class ImagePreviewMessage implements Component {
     );
   }
 
+  invalidate(): void {
+    for (const image of this.images) image.invalidate();
+  }
+
   render(width: number): string[] {
+    return this.options.style === "collapsible"
+      ? this.renderCollapsible(width)
+      : this.renderRaw(width);
+  }
+
+  private renderRaw(width: number): string[] {
     const lines: string[] = [];
     const safeWidth = Math.max(1, width);
     for (let index = 0; index < this.attachments.length; index++) {
@@ -46,8 +69,33 @@ export class ImagePreviewMessage implements Component {
     return lines;
   }
 
-  invalidate(): void {
-    for (const image of this.images) image.invalidate();
+  private renderCollapsible(width: number): string[] {
+    const container = new Container();
+    container.addChild(new Spacer(1));
+    const box = new Box(1, 1, this.theme.background);
+    container.addChild(box);
+
+    const title = this.theme.title ?? this.theme.fallbackColor;
+    const muted = this.theme.muted ?? this.theme.fallbackColor;
+    const summary =
+      this.attachments.length === 1
+        ? `Attached ${this.attachments[0]!.placeholder}`
+        : `Attached ${this.attachments.length} images`;
+    const suffix = this.options.expanded ? " (ctrl+o to collapse)" : " (ctrl+o to expand)";
+    box.addChild(new Text(`${title(summary)}${muted(suffix)}`, 0, 0));
+
+    for (const attachment of this.attachments) {
+      box.addChild(new Text(formatAttachmentLine(attachment, width, muted), 0, 0));
+    }
+
+    const lines = container.render(width);
+    if (!this.options.expanded) return lines;
+
+    const safeWidth = Math.max(1, width);
+    for (let index = 0; index < this.attachments.length; index++) {
+      lines.push(...this.images[index]!.render(safeWidth));
+    }
+    return lines;
   }
 }
 

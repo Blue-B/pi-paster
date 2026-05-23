@@ -87,7 +87,7 @@ On macOS, pi exposes an image paste action through its keybinding system. In the
 
 ## Configuration
 
-By default all editor integrations are enabled.
+By default all editor integrations are enabled, and submitted image previews render in the raw chat-history style.
 
 To customize behavior, load a small wrapper extension:
 
@@ -95,6 +95,7 @@ To customize behavior, load a small wrapper extension:
 import { createPaster } from "pi-paster";
 
 export default createPaster({
+  submittedPreviewStyle: "raw",
   customEditor: {
     enabled: true,
     showImagePreview: true,
@@ -105,11 +106,12 @@ export default createPaster({
 
 ### Options
 
-| Option                                  | Default | Description                                                                                                                 |
-| --------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `customEditor.enabled`                  | `true`  | Replaces pi's input editor with paster's editor integration. Disable this to keep pi's default editor.                      |
-| `customEditor.showImagePreview`         | `true`  | Shows an image preview above the input when the cursor is inside an image placeholder. Requires `customEditor.enabled`.     |
-| `customEditor.deletePlaceholderAsBlock` | `true`  | Makes backspace/delete remove the whole placeholder when editing inside or adjacent to it. Requires `customEditor.enabled`. |
+| Option                                  | Default | Description                                                                                                                             |
+| --------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `submittedPreviewStyle`                 | `"raw"` | How submitted image previews render in chat history. Use `"collapsible"` to wrap them in pi's ctrl+o expandable/collapsible message UI. |
+| `customEditor.enabled`                  | `true`  | Replaces pi's input editor with paster's editor integration. Disable this to keep pi's default editor.                                  |
+| `customEditor.showImagePreview`         | `true`  | Shows an image preview above the input when the cursor is inside an image placeholder. Requires `customEditor.enabled`.                 |
+| `customEditor.deletePlaceholderAsBlock` | `true`  | Makes backspace/delete remove the whole placeholder when editing inside or adjacent to it. Requires `customEditor.enabled`.             |
 
 When `customEditor.enabled` is `false`, paster still handles bracketed terminal paste/drop image paths, but cursor previews, atomic placeholder deletion, and paster's clipboard-image handler are disabled.
 
