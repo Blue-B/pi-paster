@@ -1,14 +1,24 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readClipboardImage } from "./clipboard.ts";
+import { registerImageCompressionCommand } from "./compress.ts";
 import { type PasterConfig, resolvePasterConfig } from "./config.ts";
 import { PasterEditor } from "./editor.ts";
 import { appendImagePathContext, imagesForTextOptimized } from "./image-utils.ts";
-import { CursorImagePreviewWidget, ImagePreviewMessage } from "./preview.ts";
+import {
+  CursorImagePreviewWidget,
+  ImageCompressionReportMessage,
+  ImagePreviewMessage,
+} from "./preview.ts";
 import { AttachmentStore } from "./store.ts";
 import { createImagePasteTerminalInputHandler } from "./terminal-input.ts";
-import type { ImageAttachment, PasterPreviewDetails } from "./types.ts";
+import type {
+  ImageAttachment,
+  ImageCompressionReportDetails,
+  PasterPreviewDetails,
+} from "./types.ts";
 
 export * from "./clipboard.ts";
+export * from "./compress.ts";
 export * from "./optimize-image.ts";
 export * from "./config.ts";
 export * from "./editor.ts";
@@ -25,9 +35,27 @@ export function createPaster(config: PasterConfig = {}): (pi: ExtensionAPI) => v
 export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): void {
   const resolvedConfig = resolvePasterConfig(config);
   const store = new AttachmentStore();
+  registerImageCompressionCommand(pi, resolvedConfig.imageCompression);
   let pendingPreview: ImageAttachment[] = [];
   let activeEditor: PasterEditor | undefined;
   let unsubscribeTerminalInput: (() => void) | undefined;
+
+  pi.registerMessageRenderer<ImageCompressionReportDetails>(
+    "paster-image-compress-report",
+    (message, options, theme) => {
+      const details = message.details;
+      if (!details) return undefined;
+      return new ImageCompressionReportMessage(
+        details,
+        {
+          background: (text) => theme.bg("toolSuccessBg", text),
+          title: (text) => theme.fg("toolTitle", theme.bold(text)),
+          muted: (text) => theme.fg("muted", text),
+        },
+        options.expanded,
+      );
+    },
+  );
 
   pi.registerMessageRenderer<PasterPreviewDetails>("paster-preview", (message, options, theme) => {
     const placeholders = message.details?.placeholders ?? [];

@@ -10,7 +10,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { ImageAttachment } from "./types.ts";
+import type { ImageAttachment, ImageCompressionReportDetails } from "./types.ts";
 
 function formatAttachmentLine(
   attachment: ImageAttachment,
@@ -97,6 +97,47 @@ export class ImagePreviewMessage implements Component {
     }
     return lines;
   }
+}
+
+interface CompressionReportTheme {
+  background?: (text: string) => string;
+  title: (text: string) => string;
+  muted: (text: string) => string;
+}
+
+export class ImageCompressionReportMessage implements Component {
+  constructor(
+    private readonly details: ImageCompressionReportDetails,
+    private readonly theme: CompressionReportTheme,
+    private readonly expanded = false,
+  ) {}
+
+  render(width: number): string[] {
+    const container = new Container();
+    container.addChild(new Spacer(1));
+    const box = new Box(1, 1, this.theme.background);
+    container.addChild(box);
+
+    const suffix = this.expanded ? " (ctrl+o to collapse)" : " (ctrl+o to expand)";
+    box.addChild(
+      new Text(
+        `${this.theme.title(`Compressed ${this.details.imageCount} image block(s) into ${this.details.summaryCount} summary/summaries`)}${this.theme.muted(suffix)}`,
+        0,
+        0,
+      ),
+    );
+
+    if (this.expanded) {
+      for (const item of this.details.items) {
+        box.addChild(new Text(this.theme.muted(`Image ${item.index}:`), 0, 0));
+        box.addChild(new Text(truncateToWidth(item.summary, Math.max(1, width - 4), "…"), 0, 0));
+      }
+    }
+
+    return container.render(width);
+  }
+
+  invalidate(): void {}
 }
 
 interface CursorPreviewTheme {

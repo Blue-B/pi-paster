@@ -57,3 +57,14 @@ export type LoadImageResult =
 export interface PasterPreviewDetails {
   placeholders: string[];
 }
+
+export interface ImageCompressionReportItem {
+  index: number;
+  summary: string;
+}
+
+export interface ImageCompressionReportDetails {
+  imageCount: number;
+  summaryCount: number;
+  items: ImageCompressionReportItem[];
+}
