@@ -18,7 +18,10 @@ interface PathToken {
   value: string;
   start: number;
   end: number;
+  bare: boolean;
 }
+
+const MAX_BARE_PATH_EXTENSIONS = 8;
 
 export function detectImageMimeType(bytes: Uint8Array): SupportedImageMimeType | undefined {
   if (
@@ -197,7 +200,7 @@ export function tokenizePathLikeText(text: string): PathToken[] {
         index++;
       }
       if (closed && isPathLike(value))
-        tokens.push({ raw: text.slice(start, index), value, start, end: index });
+        tokens.push({ raw: text.slice(start, index), value, start, end: index, bare: false });
       continue;
     }
 
@@ -215,10 +218,54 @@ export function tokenizePathLikeText(text: string): PathToken[] {
       index++;
     }
     const value = windowsMode ? rawValue : shellUnescape(rawValue);
-    if (isPathLike(value)) tokens.push({ raw: rawValue, value, start, end: index });
+    if (isPathLike(value)) tokens.push({ raw: rawValue, value, start, end: index, bare: true });
   }
 
   return tokens;
+}
+
+function tryExtendBareToken(
+  text: string,
+  token: PathToken,
+  attempt: (path: string) => LoadImageResult,
+): { value: string; end: number; result: LoadImageResult } {
+  let value = token.value;
+  let end = token.end;
+  let lastResult = attempt(value);
+  if (lastResult.ok || lastResult.reason === "too-large" || !token.bare) {
+    return { value, end, result: lastResult };
+  }
+
+  let scan = end;
+  for (let i = 0; i < MAX_BARE_PATH_EXTENSIONS; i++) {
+    let wsEnd = scan;
+    while (wsEnd < text.length) {
+      const ch = text[wsEnd]!;
+      if (ch === "\n" || ch === "\r") break;
+      if (!/\s/.test(ch)) break;
+      wsEnd++;
+    }
+    if (wsEnd === scan) break;
+
+    let wordEnd = wsEnd;
+    while (wordEnd < text.length && !/\s/.test(text[wordEnd]!)) wordEnd++;
+    if (wordEnd === wsEnd) break;
+
+    const nextWord = shellUnescape(text.slice(wsEnd, wordEnd));
+    if (isPathLike(nextWord)) break;
+
+    const extendedValue = value + text.slice(scan, wsEnd) + nextWord;
+    const candidate = attempt(extendedValue);
+    scan = wordEnd;
+    if (candidate.ok || candidate.reason === "too-large") {
+      return { value: extendedValue, end: wordEnd, result: candidate };
+    }
+    value = extendedValue;
+    end = wordEnd;
+    lastResult = candidate;
+  }
+
+  return { value, end, result: lastResult };
 }
 
 export function dimensionsForImage(data: string, mimeType: SupportedImageMimeType) {
@@ -275,16 +322,18 @@ export function replaceImagePathsInText(
   const loadImage = options.loadImage ?? loadImageFromPath;
 
   for (const token of tokens) {
-    const result = loadImage(token.value, options.cwd);
-    if (!result.ok) {
-      options.onReject?.(result);
+    if (token.start < cursor) continue;
+
+    const extended = tryExtendBareToken(text, token, (path) => loadImage(path, options.cwd));
+    if (!extended.result.ok) {
+      if (extended.result.reason === "too-large") options.onReject?.(extended.result);
       continue;
     }
 
-    const attachment = options.store.add(result.image);
+    const attachment = options.store.add(extended.result.image);
     accepted.push(attachment);
     output += text.slice(cursor, token.start) + attachment.placeholder;
-    cursor = token.end;
+    cursor = extended.end;
     replaced++;
   }
 
@@ -355,4 +404,14 @@ export async function imagesForTextOptimized(
     });
   }
   return [...existing, ...optimized];
+}
+
+export function describeReject(
+  result: Exclude<LoadImageResult, { ok: true }>,
+  notify?: (message: string) => void,
+): void {
+  if (!notify) return;
+  if (result.reason === "too-large") {
+    notify(`paster: image is too large and was not attached: ${result.path}`);
+  }
 }

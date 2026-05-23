@@ -111,6 +111,16 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
     store.clear();
   });
 
+  function previewMessage(attachments: ImageAttachment[]) {
+    const placeholders = attachments.map((attachment) => attachment.placeholder);
+    return {
+      customType: "paster-preview",
+      content: `(attachment preview: ${placeholders.join(", ")})`,
+      display: true,
+      details: { placeholders },
+    };
+  }
+
   pi.on("input", async (event, ctx) => {
     if (event.source === "extension") return { action: "continue" as const };
     if (ctx.hasUI) {
@@ -119,7 +129,14 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
 
     const attachments = store.matchingPlaceholders(event.text);
     if (attachments.length === 0) return { action: "continue" as const };
-    pendingPreview = attachments;
+
+    if (ctx.isIdle()) {
+      pendingPreview = attachments;
+    } else {
+      // Queued steer/follow-up messages do not fire before_agent_start when they are
+      // later delivered by the running agent, so enqueue the preview alongside them now.
+      pi.sendMessage(previewMessage(attachments), { deliverAs: "followUp" });
+    }
 
     // Optimize images on-submit so we never exceed Anthropic's 5 MB/image or
     // 32 MB/request caps. Per-attachment caching means each image is only
@@ -135,22 +152,8 @@ export default function paster(pi: ExtensionAPI, config: PasterConfig = {}): voi
 
   pi.on("before_agent_start", () => {
     if (pendingPreview.length === 0) return;
-    const placeholders = pendingPreview.map((attachment) => attachment.placeholder);
+    const message = previewMessage(pendingPreview);
     pendingPreview = [];
-    // NOTE: pi core's convertToLlm() forwards custom messages to the model as a
-    // user message verbatim. An empty `content` becomes a text block with
-    // text: "" which Claude rejects with
-    //   400 messages: text content blocks must be non-empty
-    // The custom message is meant as a UI-only preview that mirrors the
-    // attachments already present in the *previous* user message, so we emit a
-    // minimal, model-readable summary instead of an empty string.
-    return {
-      message: {
-        customType: "paster-preview",
-        content: `(attachment preview: ${placeholders.join(", ")})`,
-        display: true,
-        details: { placeholders },
-      },
-    };
+    return { message };
   });
 }
